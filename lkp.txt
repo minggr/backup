@@ -1,0 +1,78 @@
+queue by hand: lkp-os:/home/perf/queue -m otc-greencity-09.jf.intel.com 
+
+put mlin.sh in linux-os:/home/perf/bmsrv
+
+HOWTO run on console machine:
+
+1. On console machine, create crontab for user mlin
+	* * * * * PATH=$PATH:/sbin:/usr/sbin:/usr/bin:/usr/local/bin /home/perf/bmsrv/queue -c cron -m ALL > /dev/null 2>>~/logs/cron.queue
+	Remember to create directory ~/logs
+
+2. On testing machine, create crontab for root user
+	1) * * * * * PATH=$PATH:/sbin:/usr/sbin:/usr/bin:/usr/local/bin /tmp/bmrun/bmrun_crontab_tasks
+        2) comment "Defaults    requiretty" in /etc/sudoers, *IMPORTANT*: so we can run sudo without tty
+	3) set testing patition at /etc/fstab or run with "/bm/bin/runs -p /dev/sda2 -t xxtask -r xxreciple"
+	   /dev/sda2 /mnt/stp ext3 noauto,user 0 0
+	4) set ssh keys to access lkp-os without password
+	
+	
+3. On console machine, check /home/perf/bmsrv/allmach.conf to see if the testing machines are blocked
+
+4. run mlin.sh at /home/perf/bmsrv (console machine)
+	it will create request at /home/perf/bmsrv/bmrun_cron_<machine>
+
+
+HOWTO run bisrun on testing machine:
+/bm/bin/bisrun /home/mlin/ v2.6.28 88342 v2.6.29-rc1 86710 2 1 i /bm/recipes/lkp-st01-x8664.recipe aim7
+position        position of the result in csv file from "raw_results", "raw_results,631899", position is 1
+line            line in the result file with result, usually 1
+
+HOWTO test a patch from console machine
+for example, test patch "patch-xxx" with 2.6.29-rc4 on lkp-tt02-x8664
+1. cp patch-xxx /home/perf/Kernels
+2. cd /home/perf/bmclient/Configs/lkp-tt02-x8664; cp config-2.6.29-rc4 config-xxx
+3. edit /home/perf/bmsrv/mlin_start.sh
+   kernels="2.6.29-rc4"
+   configfile=config-xxx
+   patchname=xxx
+
+
+HOWTO load result into database
+/home/perf/parser/parse.sh mlin mlin
+http://lkp-os.sh.intel.com/phpMyAdmin-2.6.2/ user:perf pass:perf
+
+
+mysql was installed on console machine.
+mysql -uperf -pperf
+mysql> use ymz_stp_results_internal
+mysql> desc users;
+
+active machines:
+----------------
+lkp-st02-x8664
+lkp-tt02-x8664
+lkp-h01
+lkp-tulsa01-x8664
+lkp-st01-x8664
+lkp-tt01-x8664
+linux-n01
+lkp-ne01
+lkp-nehalem01
+
+inactive machines:
+----------------
+lkp-sant01-i386
+lkp-sant01-x8664
+lkp-s01-i386
+lkp-s01-x8664
+lkp-b01-x8664
+lkp-b01-i386
+otc-tylersburg-ep
+linux-m01
+lkp-t61-x8664
+lkp-t61
+lkp-wd01-i386
+lkp-wd02-x8664
+lkp-ne02
+
+fluctuation
