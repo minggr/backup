@@ -1,0 +1,25 @@
+#!/bin/bash
+
+GIT=/usr/local/bin/git
+
+> /tmp/daily.job.out
+cd /usr/src/linux-2.6
+
+orig_branch=`$GIT branch |grep \* | awk '{print $2}'`
+if [ ! "$orig_branch" = "master" ] ; then
+	$GIT checkout master
+fi
+if [ ! $? = 0 ] ; then
+	exit 0
+fi 
+
+$GIT pull
+$GIT remote update
+
+rm -f include/asm
+/usr/local/bin/mktag
+
+cur_branch=`$GIT branch |grep \* | awk '{print $2}'`
+if [ ! $orig_branch = $cur_branch ] ; then
+	$GIT checkout $orig_branch
+fi

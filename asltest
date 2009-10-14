@@ -1,0 +1,55 @@
+#!/bin/bash
+
+postfix=`date +%H%M%S`
+tmp_iasl=/tmp/iasl-$postfix
+tmp_acpiexec=/tmp/acpiexec-$postfix
+
+set_path() {
+	asltsdir=$1
+	path=$2
+	
+	if [ -z "$path" ] || [ -z "$asltsdir" ] ; then
+		echo "no path input"
+		exit
+	elif [ ! -d "$path" ] || [ ! -d "$asltsdir" ]; then
+		echo $path or $asltsdir is not a dir
+		exit
+	else
+		sudo rm -f $tmp_iasl $tmp_acpiexec
+
+		cd ${path}/compiler
+		make clean
+		make
+		cp iasl $tmp_iasl
+
+		cd ${path}/tools/acpiexec
+		make clean
+		make -j16
+		cp acpiexec $tmp_acpiexec
+		
+	
+		if [[ ! -f $tmp_iasl || ! -f $tmp_acpiexec ]] ; then
+			echo "no asl or acpiexec found"
+			exit
+		else
+			export ASL=$tmp_iasl
+			export acpiexec=$tmp_acpiexec
+			
+			export ASLTSDIR=$asltsdir
+			export PATH=$ASLTSDIR/bin:$PATH
+		fi
+	fi
+}
+
+unset ASL
+unset acpiexec
+unset ASLTSDIR
+if [ $# != 2 ] ; then
+	echo "asltest <ASLTS> <ACPICA>"
+else
+	set_path $1 $2
+	version=`$ASL | grep version | awk '{print $5}'`
+	rm -rf $ASLTSDIR/tmp/aml/$version
+	Do 0 aslts
+	Do 1
+fi
