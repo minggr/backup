@@ -1,0 +1,319 @@
+diff --git a/fs/proc/cmdline.c b/fs/proc/cmdline.c
+index 82676e3..eda4c3e 100644
+--- a/fs/proc/cmdline.c
++++ b/fs/proc/cmdline.c
+@@ -2,6 +2,34 @@
+ #include <linux/init.h>
+ #include <linux/proc_fs.h>
+ #include <linux/seq_file.h>
++#include <linux/profile.h>
++
++extern struct seq_operations ctxsw_op;
++extern ssize_t  ctxsw_write(struct file *, const char *, size_t, loff_t *);
++static int ctxsw_open(struct inode * inode, struct file * file)
++{
++	return seq_open(file, &ctxsw_op);
++}
++
++static struct file_operations proc_ctxsw_operations = {
++	.open           = ctxsw_open,
++	.read           = seq_read,
++	.write          = ctxsw_write,
++	.llseek         = seq_lseek,
++	.release        = seq_release,
++};
++
++static int read_ctxsw_status_proc(char *buf, char **start, off_t off,
++				int count, int *eof, void *data)
++{
++	int len;
++
++	*eof = 1;
++
++	len = sprintf(buf, "%s, pid = %d\n", (ctxsw_on)?"running":"stopped", ctxsw_pid);
++
++	return len;
++}
+ 
+ static int cmdline_proc_show(struct seq_file *m, void *v)
+ {
+@@ -24,6 +52,9 @@ static const struct file_operations cmdline_proc_fops = {
+ static int __init proc_cmdline_init(void)
+ {
+ 	proc_create("cmdline", 0, NULL, &cmdline_proc_fops);
++	proc_create("ctxsw", S_IWUGO|S_IRUGO, NULL, &proc_ctxsw_operations);
++	create_proc_read_entry("ctxsw_status", 0400,
++                        NULL, read_ctxsw_status_proc, NULL);
+ 	return 0;
+ }
+ module_init(proc_cmdline_init);
+diff --git a/include/linux/profile.h b/include/linux/profile.h
+index a0fc322..f035a1d 100644
+--- a/include/linux/profile.h
++++ b/include/linux/profile.h
+@@ -7,6 +7,7 @@
+ #include <linux/cache.h>
+ 
+ #include <asm/errno.h>
++#include <asm/atomic.h>
+ 
+ #define CPU_PROFILING	1
+ #define SCHED_PROFILING	2
+@@ -40,6 +41,54 @@ enum profile_type {
+ 
+ extern int prof_on __read_mostly;
+ 
++struct ctxsw_rec {
++	unsigned long	ip;
++	atomic_t 	count;
++};
++
++extern struct ctxsw_rec * ctxsw_from;
++extern struct ctxsw_rec * ctxsw_self;
++extern unsigned int	ctxsw_len;
++extern unsigned int	ctxsw_on;
++extern unsigned int	ctxsw_shift;
++extern int		ctxsw_pid;
++
++unsigned long ctxsw_get_ip_function(void);
++
++#define CTXSW_RECORD	{	\
++	extern char _stext[], _etext[];	\
++	unsigned long from, self;	\
++	unsigned long from_index, self_index;	\
++	struct ctxsw_rec *rec;	\
++				\
++	self = ctxsw_get_ip_function(); 	\
++	from = (unsigned long)__builtin_return_address(0);	\
++	if(ctxsw_on && ctxsw_from && ctxsw_self	\
++	&& from <= (unsigned long) _etext	\
++	&& from >= (unsigned long) _stext ) {	\
++		if ( !ctxsw_pid	|| (current && current->pid == ctxsw_pid) ) {		\
++			from_index = (from - (unsigned long) _stext) >> ctxsw_shift;	\
++			if ( from_index > ctxsw_len - 1)				\
++				from_index = ctxsw_len - 1;				\
++			rec = &ctxsw_from[from_index];					\
++											\
++			if (rec->ip == 0) {						\
++				rec->ip = self;						\
++			}								\
++			else if (rec->ip != self) {					\
++				self_index = (self - (unsigned long) &_etext) >> ctxsw_shift;	\
++				if(self_index > ctxsw_len - 1)					\
++					self_index = ctxsw_len - 1;				\
++				rec = &ctxsw_self[self_index];					\
++				if (rec->ip == 0)		\
++					rec->ip = from;		\
++			}					\
++								\
++			atomic_inc(&rec->count);		\
++		}						\
++	}							\
++}
++
+ /* init basic kernel profiler */
+ int profile_init(void);
+ int profile_setup(char *str);
+diff --git a/kernel/profile.c b/kernel/profile.c
+index a55d3a3..ee55aee 100644
+--- a/kernel/profile.c
++++ b/kernel/profile.c
+@@ -22,6 +22,8 @@
+ #include <linux/cpu.h>
+ #include <linux/highmem.h>
+ #include <linux/mutex.h>
++#include <linux/seq_file.h>
++#include <asm/uaccess.h>
+ #include <linux/slab.h>
+ #include <linux/vmalloc.h>
+ #include <asm/sections.h>
+@@ -52,6 +54,12 @@ static DEFINE_PER_CPU(int, cpu_profile_flip);
+ static DEFINE_MUTEX(profile_flip_mutex);
+ #endif /* CONFIG_SMP */
+ 
++struct ctxsw_rec * ctxsw_from, * ctxsw_self;
++unsigned int  ctxsw_len;
++unsigned int  ctxsw_on = 0;
++unsigned int  ctxsw_shift = 1;
++int           ctxsw_pid = 0;
++
+ int profile_setup(char *str)
+ {
+ 	static char schedstr[] = "schedule";
+@@ -105,6 +113,17 @@ __setup("profile=", profile_setup);
+ int __ref profile_init(void)
+ {
+ 	int buffer_bytes;
++
++	size_t size;
++	ctxsw_len = (unsigned long) &_etext - (unsigned long) &_stext;
++	ctxsw_len >>= ctxsw_shift;
++	size = ctxsw_len * sizeof(struct ctxsw_rec);
++
++	if ((ctxsw_from = (struct ctxsw_rec *) alloc_bootmem(size)) )
++		memset(ctxsw_from, 0, size);
++	if ((ctxsw_self = (struct ctxsw_rec *) alloc_bootmem(size)) )
++		memset(ctxsw_self, 0, size);
++
+ 	if (!prof_on)
+ 		return 0;
+ 
+@@ -134,6 +153,132 @@ int __ref profile_init(void)
+ 	return -ENOMEM;
+ }
+ 
++unsigned long ctxsw_get_ip_function(void)
++{
++	return (unsigned long)__builtin_return_address(0);
++}
++
++static void *s_start(struct seq_file *m, loff_t *pos)
++{
++	if(!*pos)
++		seq_printf(m, "gmon\n");
++
++	return (*pos < 2*ctxsw_len)?pos:NULL;
++}
++
++static void *s_next(struct seq_file *m, void * p, loff_t *pos)
++{
++	(*pos)++;
++	return (*pos < 2*ctxsw_len)?pos:NULL;
++}
++
++static void s_stop(struct seq_file *m, void * p)
++{
++}
++
++static int s_show(struct seq_file *m, void * p)
++{
++	struct ctxsw_rec * rec;
++	unsigned long from, self;
++	loff_t index = * (loff_t *)p;
++
++	if (!ctxsw_from || !ctxsw_self)
++		return 0;
++
++	if (index < ctxsw_len) {
++		rec = ctxsw_from + index;
++		if (rec->ip) {
++			from = (unsigned long) &_stext + (index << ctxsw_shift);
++			self = rec->ip;
++			return seq_printf(m, "%lx, %lx, %d\n",
++					from,
++					self,
++					atomic_read(&rec->count));
++		}
++	} else {
++		index -= ctxsw_len;
++		rec = ctxsw_self + index;
++		if (rec->ip) {
++			from = rec->ip;
++			self = (unsigned long) &_stext + (index << ctxsw_shift);
++			return seq_printf(m, "%lx, %lx, %d\n",
++					from,
++					self,
++					atomic_read(&rec->count));
++		}
++	}
++	return 0;
++}
++
++struct seq_operations ctxsw_op = {
++	.start		= s_start,
++	.next		= s_next,
++	.stop		= s_stop,
++	.show		= s_show
++};
++
++ssize_t ctxsw_write(struct file * file, const char * buf,
++		size_t count, loff_t *pos)
++{
++#define MAX_CTXSW_COMMAND_SIZE	200
++	char c;
++	unsigned int pid;
++	char buffer[MAX_CTXSW_COMMAND_SIZE];
++	char *p;
++
++	if(!buf || count > MAX_CTXSW_COMMAND_SIZE)
++		return -EINVAL;
++	if (copy_from_user(buffer, buf, count) )
++		return -EFAULT;
++
++	if ( count < MAX_CTXSW_COMMAND_SIZE ) 
++		buffer[count] = 0;
++	else 
++		buffer[MAX_CTXSW_COMMAND_SIZE-1] = 0;
++
++	p = buffer;
++
++	if( !(c = p[0]) )
++		return -EFAULT;
++	p+=2;
++
++	switch(c) {
++		case '1':
++			if ( ctxsw_on )
++				return -EFAULT;
++			if (strncmp(p, "pid=", 4) == 0) {
++				if(sscanf(p+4, "%d", &pid)==1)
++					ctxsw_pid = pid;
++				else
++					return -EFAULT;
++			}
++			ctxsw_on = 1;
++			break;
++		case '0':
++			if (strncmp(p, "pid=", 4) == 0) {
++				if(sscanf(p+4, "%d", &pid)==1) {
++					if(ctxsw_pid && ctxsw_pid != pid )
++						return -EFAULT;
++					ctxsw_pid = 0;
++				}
++				else
++					return -EFAULT;
++			}
++			ctxsw_on = 0;
++			break;
++		case 'r':
++			ctxsw_on = 0;
++			ctxsw_pid = 0;
++			memset(ctxsw_from, 0, ctxsw_len * sizeof(*ctxsw_from));
++			memset(ctxsw_self, 0, ctxsw_len * sizeof(*ctxsw_self));
++			break;
++		default :
++			break;
++	}
++
++	return count;
++}
++
+ /* Profile event notifications */
+ 
+ static BLOCKING_NOTIFIER_HEAD(task_exit_notifier);
+diff --git a/kernel/sched.c b/kernel/sched.c
+index e886895..1f53c73 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -5387,6 +5387,8 @@ asmlinkage void __sched schedule(void)
+ 	struct rq *rq;
+ 	int cpu;
+ 
++	CTXSW_RECORD;
++
+ need_resched:
+ 	preempt_disable();
+ 	cpu = smp_processor_id();
+diff --git a/kernel/timer.c b/kernel/timer.c
+index 5db5a8d..824c2f9 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -1355,6 +1355,8 @@ signed long __sched schedule_timeout(signed long timeout)
+ 	struct timer_list timer;
+ 	unsigned long expire;
+ 
++	CTXSW_RECORD;
++
+ 	switch (timeout)
+ 	{
+ 	case MAX_SCHEDULE_TIMEOUT:

@@ -1,0 +1,36 @@
+Including please find two patch, both on IPF
+
+ctxsw_2.6.21-rc3_em64t.patch
+	for kernel 2.6.21-rc3
+
+Applying the patch can collect calling data for a special function "schedule_timeout". 
+
+[Usage]
+	1. echo "r" > /proc/ctxsw		// reset the collecter, reset the pidnum
+	2. echo "1" > /proc/ctxsw		// start without specified pid
+	3. echo "1 pid=pid_num" > /proc/ctxsw	// start with specified pidnum
+	4. echo "0" > /proc/ctxsw		// stop, leave the specified pidnum unclear
+	5. echo "0 pid=pid_num" > /proc/ctxsw	// stop, clear the specified pidnum
+	6. cat /proc/ctxsw			// get the collected data
+	7. cat /proc/ctxsw_status		// get the running status of ctxsw_status 
+						// (whether running or not, and the current pidnum)
+
+	Note: 
+		Only one pidnum can be specified during one collection. 
+
+
+Example:
+	echo "r" > /proc/ctxsw
+	echo "1" > /proc/ctxsw
+	echo "0" > /proc/ctxsw
+	cat /proc/ctxsw > /root/ctx.out (Here gmon.out is the gmon output file which is one of the input file of gprof. )
+	./cg_convert_new /root/ctx.out /root/gmon.out > /root/gmon.out (Here gmon.out is the gmon output file which is one of the input file of gprof. )
+
+By using gprof, we can get the call graph to function "schedule_timeout".
+
+Example:
+	gprof vmlinux gmon.out		(Here vmlinux is the kernel image)
+
+[Advanced Tips]
+	If functions other than "schedule_timeout" and "schedule" should be the callee, just include linux/profile.h and
+	put CTXSW_RECORD in the beginning of the functions. Then recompile the kernel to get proper kernel image. 

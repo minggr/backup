@@ -1,0 +1,332 @@
+diff -Nraup linux-2.6.21-rc3/fs/proc/proc_misc.c linux-2.6.21-rc3_fix/fs/proc/proc_misc.c
+--- linux-2.6.21-rc3/fs/proc/proc_misc.c	2007-03-20 12:24:03.000000000 +0800
++++ linux-2.6.21-rc3_fix/fs/proc/proc_misc.c	2007-03-20 12:20:25.000000000 +0800
+@@ -633,6 +633,34 @@ static int execdomains_read_proc(char *p
+ 	return proc_calc_metrics(page, start, off, count, eof, len);
+ }
+ 
++extern struct seq_operations ctxsw_op;
++extern ssize_t  ctxsw_write(struct file *, const char *, size_t, loff_t *);
++static int ctxsw_open(struct inode * inode, struct file * file)
++{
++	return seq_open(file, &ctxsw_op);
++}
++
++static struct file_operations proc_ctxsw_operations = {
++	.open           = ctxsw_open,
++	.read           = seq_read,
++	.write          = ctxsw_write,
++	.llseek         = seq_lseek,
++	.release        = seq_release,
++};
++
++static int read_ctxsw_status_proc(char *page, char **start, off_t off,
++				int count, int *eof, void *data)
++{
++	char temp[20];
++	int len;
++
++	sprintf(temp, "%s, pid = %d\n", (ctxsw_on)?"running":"stopped", ctxsw_pid);
++	temp[19]=0;
++	strcpy(page, temp);
++	len = strlen(page);
++	return proc_calc_metrics(page, start, off, count, eof, len);
++}
++
+ #ifdef CONFIG_MAGIC_SYSRQ
+ /*
+  * writing 'C' to /proc/sysrq-trigger is like sysrq-C
+@@ -685,6 +713,7 @@ void __init proc_misc_init(void)
+ 		{"cmdline",	cmdline_read_proc},
+ 		{"locks",	locks_read_proc},
+ 		{"execdomains",	execdomains_read_proc},
++		{"ctxsw_status",        read_ctxsw_status_proc},
+ 		{NULL,}
+ 	};
+ 	for (p = simple_ones; p->name; p++)
+@@ -739,6 +768,8 @@ void __init proc_misc_init(void)
+ 	if (proc_vmcore)
+ 		proc_vmcore->proc_fops = &proc_vmcore_operations;
+ #endif
++	create_seq_entry("ctxsw", S_IWUGO|S_IRUGO, &proc_ctxsw_operations);
++
+ #ifdef CONFIG_MAGIC_SYSRQ
+ 	{
+ 		struct proc_dir_entry *entry;
+diff -Nraup linux-2.6.21-rc3/include/linux/profile.h linux-2.6.21-rc3_fix/include/linux/profile.h
+--- linux-2.6.21-rc3/include/linux/profile.h	2007-02-08 15:13:44.000000000 +0800
++++ linux-2.6.21-rc3_fix/include/linux/profile.h	2007-03-20 12:20:12.000000000 +0800
+@@ -9,9 +9,59 @@
+ #include <linux/cache.h>
+ 
+ #include <asm/errno.h>
++#include <asm/atomic.h>
+ 
+ extern int prof_on __read_mostly;
+ 
++
++ struct ctxsw_rec {
++ 	unsigned long	ip;
++ 	atomic_t 	count;
++ };
++ 
++ extern struct ctxsw_rec * ctxsw_from;
++ extern struct ctxsw_rec * ctxsw_self;
++ extern unsigned int	ctxsw_len;
++ extern unsigned int	ctxsw_on;
++ extern unsigned int	ctxsw_shift;
++ extern int		ctxsw_pid;
++ 
++ unsigned long ctxsw_get_ip_function(void);
++ 
++ #define CTXSW_RECORD	{	\
++ 	extern char _stext, _etext;	\
++ 	unsigned long from, self;	\
++ 	unsigned long from_index, self_index;	\
++ 	struct ctxsw_rec *rec;	\
++ 				\
++ 	self = ctxsw_get_ip_function(); 	\
++ 	from = (unsigned long)__builtin_return_address(0);	\
++ 	if(ctxsw_on && ctxsw_from && ctxsw_self	\
++ 	&& from <= (unsigned long) &_etext	\
++ 	&& from >= (unsigned long) &_stext ) {	\
++ 		if ( !ctxsw_pid	|| (current && current->pid == ctxsw_pid) ) {		\
++ 			from_index = (from - (unsigned long) &_stext) >> ctxsw_shift;	\
++ 			if ( from_index > ctxsw_len - 1)				\
++ 				from_index = ctxsw_len - 1;				\
++ 			rec = &ctxsw_from[from_index];					\
++ 											\
++ 			if (rec->ip == 0) {						\
++ 				rec->ip = self;						\
++ 			}								\
++ 			else if (rec->ip != self) {					\
++ 				self_index = (self - (unsigned long) &_etext) >> ctxsw_shift;	\
++ 				if(self_index > ctxsw_len - 1)					\
++ 					self_index = ctxsw_len - 1;				\
++ 				rec = &ctxsw_self[self_index];					\
++ 				if (rec->ip == 0)		\
++ 					rec->ip = from;		\
++ 			}					\
++ 								\
++ 			atomic_inc(&rec->count);		\
++ 		}						\
++ 	}							\
++ }
++
+ #define CPU_PROFILING	1
+ #define SCHED_PROFILING	2
+ #define SLEEP_PROFILING	3
+diff -Nraup linux-2.6.21-rc3/kernel/profile.c linux-2.6.21-rc3_fix/kernel/profile.c
+--- linux-2.6.21-rc3/kernel/profile.c	2007-03-20 12:24:03.000000000 +0800
++++ linux-2.6.21-rc3_fix/kernel/profile.c	2007-03-20 12:20:09.000000000 +0800
+@@ -26,6 +26,8 @@
+ #include <asm/sections.h>
+ #include <asm/semaphore.h>
+ #include <asm/irq_regs.h>
++#include <linux/seq_file.h>
++#include <asm/uaccess.h>
+ 
+ struct profile_hit {
+ 	u32 pc, hits;
+@@ -51,6 +53,13 @@ static DEFINE_PER_CPU(int, cpu_profile_f
+ static DEFINE_MUTEX(profile_flip_mutex);
+ #endif /* CONFIG_SMP */
+ 
++struct ctxsw_rec * ctxsw_from, * ctxsw_self;
++unsigned int  ctxsw_len;
++unsigned int  ctxsw_on = 0;
++unsigned int  ctxsw_shift = 1;
++int           ctxsw_pid = 0;
++
++
+ static int __init profile_setup(char * str)
+ {
+ 	static char __initdata schedstr[] = "schedule";
+@@ -98,14 +107,151 @@ __setup("profile=", profile_setup);
+ 
+ void __init profile_init(void)
+ {
+-	if (!prof_on) 
+-		return;
+- 
++	size_t size;
++       ctxsw_len = (unsigned long) &_etext - (unsigned long) &_stext;
++       ctxsw_len >>= ctxsw_shift;
++       size = ctxsw_len * sizeof(struct ctxsw_rec);
++
++       if ((ctxsw_from = (struct ctxsw_rec *) alloc_bootmem(size)) )
++               memset(ctxsw_from, 0, size);
++       if ((ctxsw_self = (struct ctxsw_rec *) alloc_bootmem(size)) )
++               memset(ctxsw_self, 0, size);
++
++       if (!prof_on)
++                return;
++
++
+ 	/* only text is profiled */
+ 	prof_len = (_etext - _stext) >> prof_shift;
+ 	prof_buffer = alloc_bootmem(prof_len*sizeof(atomic_t));
+ }
+ 
++unsigned long ctxsw_get_ip_function(void)
++{
++	return (unsigned long)__builtin_return_address(0);
++}
++
++static void *s_start(struct seq_file *m, loff_t *pos)
++{
++	if(!*pos)
++		seq_printf(m, "gmon\n");
++
++	return (*pos < 2*ctxsw_len)?pos:NULL;
++}
++
++static void *s_next(struct seq_file *m, void * p, loff_t *pos)
++{
++	(*pos)++;
++	return (*pos < 2*ctxsw_len)?pos:NULL;
++}
++
++static void s_stop(struct seq_file *m, void * p)
++{
++}
++
++static int s_show(struct seq_file *m, void * p)
++{
++	struct ctxsw_rec * rec;
++	unsigned long from, self;
++	loff_t index = * (loff_t *)p;
++	
++	if (!ctxsw_from || !ctxsw_self)
++		return 0;
++
++	if (index < ctxsw_len) {
++		rec = ctxsw_from + index;
++		if (rec->ip) {
++			from = (unsigned long) &_stext + (index << ctxsw_shift);
++			self = rec->ip;
++			return seq_printf(m, "%lx, %lx, %d\n",
++					from,
++					self,
++					atomic_read(&rec->count));
++		}
++	} else {
++		index -= ctxsw_len;
++		rec = ctxsw_self + index;
++		if (rec->ip) {
++			from = rec->ip;
++			self = (unsigned long) &_stext + (index << ctxsw_shift);
++			return seq_printf(m, "%lx, %lx, %d\n",
++					from,
++					self,
++					atomic_read(&rec->count));
++		}
++	}
++	return 0;
++}
++
++struct seq_operations ctxsw_op = {
++	.start		= s_start,
++	.next		= s_next,
++	.stop		= s_stop,
++	.show		= s_show
++};
++
++ssize_t ctxsw_write(struct file * file, const char * buf,
++		size_t count, loff_t *pos)
++{
++#define MAX_CTXSW_COMMAND_SIZE	200
++	char c;
++	unsigned int pid;
++	char buffer[MAX_CTXSW_COMMAND_SIZE];
++	char *p;
++
++	if(!buf || count > MAX_CTXSW_COMMAND_SIZE)
++		return -EINVAL;
++	if (copy_from_user(buffer, buf, count) )
++		return -EFAULT;
++
++	if ( count < MAX_CTXSW_COMMAND_SIZE ) 
++		buffer[count] = 0;
++	else 
++		buffer[MAX_CTXSW_COMMAND_SIZE-1] = 0;
++
++	p = buffer;
++
++	if( !(c = p[0]) )
++		return -EFAULT;
++	p+=2;
++
++	switch(c) {
++		case '1':
++			if ( ctxsw_on )
++				return -EFAULT;
++			if (strncmp(p, "pid=", 4) == 0) {
++				if(sscanf(p+4, "%d", &pid)==1)
++					ctxsw_pid = pid;
++				else
++					return -EFAULT;
++			}
++			ctxsw_on = 1;
++			break;
++		case '0':
++			if (strncmp(p, "pid=", 4) == 0) {
++				if(sscanf(p+4, "%d", &pid)==1) {
++					if(ctxsw_pid && ctxsw_pid != pid )
++						return -EFAULT;
++					ctxsw_pid = 0;
++				}
++				else
++					return -EFAULT;
++			}
++			ctxsw_on = 0;
++			break;
++		case 'r':
++			ctxsw_on = 0;
++			ctxsw_pid = 0;
++			memset(ctxsw_from, 0, ctxsw_len * sizeof(*ctxsw_from));
++			memset(ctxsw_self, 0, ctxsw_len * sizeof(*ctxsw_self));
++			break;
++		default :
++			break;
++	}
++
++	return count;
++}
++
+ /* Profile event notifications */
+  
+ #ifdef CONFIG_PROFILING
+diff -Nraup linux-2.6.21-rc3/kernel/sched.c linux-2.6.21-rc3_fix/kernel/sched.c
+--- linux-2.6.21-rc3/kernel/sched.c	2007-03-20 12:24:03.000000000 +0800
++++ linux-2.6.21-rc3_fix/kernel/sched.c	2007-03-20 12:20:09.000000000 +0800
+@@ -1853,6 +1853,8 @@ context_switch(struct rq *rq, struct tas
+ 	struct mm_struct *mm = next->mm;
+ 	struct mm_struct *oldmm = prev->active_mm;
+ 
++	CTXSW_RECORD;
++
+ 	/*
+ 	 * For paravirt, this is coupled with an exit in switch_to to
+ 	 * combine the page table reload and the switch backend into
+@@ -3760,6 +3762,8 @@ out:
+ }
+ EXPORT_SYMBOL(wait_for_completion_interruptible_timeout);
+ 
++#include <asm/uaccess.h>
++#include <linux/profile.h>
+ 
+ #define	SLEEP_ON_VAR					\
+ 	unsigned long flags;				\
+diff -Nraup linux-2.6.21-rc3/kernel/timer.c linux-2.6.21-rc3_fix/kernel/timer.c
+--- linux-2.6.21-rc3/kernel/timer.c	2007-03-20 12:24:03.000000000 +0800
++++ linux-2.6.21-rc3_fix/kernel/timer.c	2007-03-20 12:20:09.000000000 +0800
+@@ -1413,6 +1413,8 @@ fastcall signed long __sched schedule_ti
+ 	struct timer_list timer;
+ 	unsigned long expire;
+ 
++	CTXSW_RECORD;
++
+ 	switch (timeout)
+ 	{
+ 	case MAX_SCHEDULE_TIMEOUT:
