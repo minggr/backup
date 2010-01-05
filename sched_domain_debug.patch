@@ -1,0 +1,38 @@
+diff --git a/kernel/sched_fair.c b/kernel/sched_fair.c
+index 42ac3c9..e6c4d7d 100644
+--- a/kernel/sched_fair.c
++++ b/kernel/sched_fair.c
+@@ -1402,6 +1402,17 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, int this_cpu)
+ 	return idlest;
+ }
+ 
++struct debug_data {
++	unsigned long sibling;
++	unsigned long mc;
++	unsigned long cpu;
++	unsigned long node;
++};
++
++DEFINE_PER_CPU(struct debug_data, my_debug_data);
++EXPORT_PER_CPU_SYMBOL(my_debug_data);
++
++
+ /*
+  * Try and locate an idle CPU in the sched_domain.
+  */
+@@ -1420,6 +1431,15 @@ select_idle_sibling(struct task_struct *p, struct sched_domain *sd, int target)
+ 	if (target == cpu && !cpu_rq(prev_cpu)->cfs.nr_running)
+ 		return prev_cpu;
+ 
++        if (sd->level == SD_LV_SIBLING)
++		per_cpu(my_debug_data, cpu).sibling++;
++        else if (sd->level == SD_LV_MC)
++		per_cpu(my_debug_data, cpu).mc++;
++        else if (sd->level == SD_LV_CPU)
++		per_cpu(my_debug_data, cpu).cpu++;
++        else if (sd->level == SD_LV_NODE)
++		per_cpu(my_debug_data, cpu).node++;
++
+ 	/*
+ 	 * Otherwise, iterate the domain and find an elegible idle cpu.
+ 	 */
