@@ -16,7 +16,7 @@
 #define TASK_ID_QUERY_STR "select id from tests where title=\"%s\""
 #define KERNEL_ID_QUERY_STR "select id from kernels where ptesting=0 and name=\"%s\""
 #define VALUE_QUERY_STR "select raw_result from results where host_id=%d and test_id=%d and kernel_id=%d"
-#define TASK_QUERY_STR "select title from tests where ptesting=0"
+#define TASK_QUERY_STR "select title, invert from tests where ptesting=0 and visible=1 order by title"
 
 #define TASK_LENGTH 256
 
@@ -50,15 +50,37 @@ char *host_list[] = {
 	NULL
 };
 
-#if 0
-char *task_list[] = {
-	"oltp", "tbench", "SPECjbb2005", "volano",
-	NULL
+char *skip_task_list[] = {
+	"VolanoMark",
+	"prx-", "volano-8", "volano-64", "volano-128",
+	"tio_thr-noop_", "tio_thr-as_", "netperf2",
+	"idlebench",
+	"hackbenchpth75", "hackbenchpth50", "hackbenchpth300", "hackbenchpth200",
+	"hackbench75", "hackbench50", "hackbench300", "hackbench200",
+	"aim7-jtt-2000",
+	"dbench-noop", "dbench-deadline", "dbench-cfq", "dbench-as",
+	NULL 
 };
-#endif
+
+int skip_task(char *name)
+{
+	char **task;
+
+	task = skip_task_list;
+
+	while (*task) {
+		if (strstr(name, *task))
+			return 1;
+		task++;
+	}
+
+	return 0;
+}
+
 
 typedef struct lkp_task {
 	char name[TASK_LENGTH];
+	int invert;
 
 	struct lkp_task *next;
 } LKP_TASK;
@@ -131,11 +153,12 @@ void lkp_getalltask()
 	MYSQL_ROW row;
 	LKP_TASK *task;
 	unsigned long *length;
+	char invert[2] = {0, 0};
 
 	sprintf(query_str, TASK_QUERY_STR);
 
 	if (mysql_query(conn, query_str)) {
-	debug_printf("Query failed: %s, %s\n", query_str, mysql_error(conn));
+		debug_printf("Query failed: %s, %s\n", query_str, mysql_error(conn));
 		return;
 	}
 
@@ -149,11 +172,15 @@ void lkp_getalltask()
 		length = mysql_fetch_lengths(result);
 		task = malloc(sizeof(LKP_TASK));
 		if (!task) {
-		debug_printf("No memory\n");
+			debug_printf("No memory\n");
 			continue;
 		}
-		strncpy(task->name, row[0], *length);
-		task->name[*length] = 0;
+		strncpy(task->name, row[0], length[0]);
+		task->name[length[0]] = 0;
+		if (skip_task(task->name))
+			continue;
+		strncpy(invert, row[1], 1);
+		task->invert = atoi(invert);
 		lkp_linktask(task);
 	}
 	
@@ -349,6 +376,8 @@ void lkp_getalldata(char *prev_kernel, char *this_kernel)
 			data->prev_value = prev_value;
 			data->this_value = this_value;
 			data->pct = (this_value - prev_value) / prev_value;
+			if (task->invert)
+				data->pct = -(data->pct);
 
 			lkp_linkdata(data);
 
