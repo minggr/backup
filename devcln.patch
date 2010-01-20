@@ -1,0 +1,78 @@
+diff -pu bin.orig/devcln bin/devcln
+--- bin.orig/devcln	2010-01-20 13:44:52.000000000 +0800
++++ bin/devcln	2010-01-20 13:50:12.000000000 +0800
+@@ -1,13 +1,16 @@
+-cwddc=$(pwd)
+-cd ${path_bmbin}
+-if [ -z "${fdisk}" ] || [ "${fdisk}" != "${pdisk}" ] || [ "$(df / | grep /dev/ | awk '{print $1}')" == "${pdisk}" ] || [ "$(df /home | grep /dev/ | awk '{print $1}')" == "${pdisk}" ] ; then
+-	sudo rm -rf ${path_test}
+-else
+-	sudo umount -f ${pdisk} ${ppath} > /dev/null 2>&1
+-#	sudo /sbin/mke2fs -j ${pdisk} > /dev/null 2>>${file_log}
+-	sudo mount ${pdisk} ${ppath} > /dev/null 2>>${file_log}
+-	sudo rm -rf ${ppath}/*
+-fi
+-sudo mkdir -m 0777 -p ${path_test} > /dev/null 2>>${file_log}
+-sudo chmod a+rwx ${path_test} > /dev/null 2>>${file_log}
+-cd $cwddc
++#This file has been ported to function prepare_stp in file runs.
++#We keep this file so we don't have to remove calls to "source ${path_bmbin}/devcln" in run_bm* scripts
++
++#cwddc=$(pwd)
++#cd ${path_bmbin}
++#if [ -z "${fdisk}" ] || [ "${fdisk}" != "${pdisk}" ] || [ "$(df / | grep /dev/ | awk '{print $1}')" == "${pdisk}" ] || [ "$(df /home | grep /dev/ | awk '{print $1}')" == "${pdisk}" ] ; then
++#	sudo rm -rf ${path_test}
++#else
++#	sudo umount -f ${pdisk} ${ppath} > /dev/null 2>&1
++##	sudo /sbin/mke2fs -j ${pdisk} > /dev/null 2>>${file_log}
++#	sudo mount ${pdisk} ${ppath} > /dev/null 2>>${file_log}
++#	sudo rm -rf ${ppath}/*
++#fi
++#sudo mkdir -m 0777 -p ${path_test} > /dev/null 2>>${file_log}
++#sudo chmod a+rwx ${path_test} > /dev/null 2>>${file_log}
++#cd $cwddc
+diff -pu bin.orig/runs bin/runs
+--- bin.orig/runs	2010-01-20 13:44:52.000000000 +0800
++++ bin/runs	2010-01-20 15:52:59.000000000 +0800
+@@ -48,6 +48,32 @@ function restore_kernel() {
+ 	sudo mv -f /boot/System.map-$1.lkp_bak /boot/System.map-$1 >/dev/null 2>&1
+ }
+ 
++#arg1: disk partion, for example /dev/sdb1
++#${ppath} is /mnt/stp
++#${path_test} is /mnt/stp/test
++function prepare_stp() {
++	partion=$1
++	if [ -z $partion ] ; then
++		return
++	fi
++
++	format_command=`recipe_get_task_gb_option stp_format_command`
++	mount_option=`recipe_get_task_gb_option stp_mount_option`
++
++	sudo umount -f ${partion} ${ppath} > /dev/null 2>&1
++	if [ ! -z $format_command ] ; then
++		sudo ${format_command} $partion > /dev/null 2>>${file_log}
++	fi
++	sudo mount ${mount_option} ${partion} ${ppath} > /dev/null 2>>${file_log}
++
++	if [ -z $format_command ] ; then
++		sudo rm -rf ${path_test}
++	fi
++
++	sudo mkdir -m 0777 -p ${path_test} > /dev/null 2>>${file_log}
++	sudo chmod a+rwx ${path_test} > /dev/null 2>>${file_log}
++}
++
+ if [ -z $1 ] ; then
+ 	func_usage
+ fi
+@@ -328,6 +354,8 @@ if [ ! -z ${flagr} ]  || [ -z ${flagb} ]
+ 				ssh ${LKPS} "/home/perf/bmsrv/machdepend -a \"${multi_main_server_mach} ${multi_clients}\""
+ 			fi
+ 
++			prepare_stp $disk
++
+ 			source ${bmtest} init
+ 
+ 			if [ "${multi_main_server_mach}" == "${mach_name}" ]; then
