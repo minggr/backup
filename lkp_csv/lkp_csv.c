@@ -38,10 +38,10 @@ char *host_list[] = {
 	"lkp-st01-x8664", "lkp-st02-x8664",
 
 	/* Nehalem */
-	"lkp-ne02", "lkp-nex03", "otc-greencity-09",
+	"lkp-ne01", "lkp-ne02", "lkp-nex03", "otc-greencity-09",
 
 	/* Westmere */
-	"linux-ws01", "lkp-ne01", "lkp-ws02",
+	"linux-ws01", "lkp-ws02",
 
 	/* IA64 */
 	"lkp-h01", "lkp-mb01", 
@@ -470,14 +470,14 @@ int main(int argc, char *argv[])
 	char *this_kernel;
 
 	if (argc < 3) {
-		printf("Usage: %s <old_kernel> <new_kernel>\n", argv[0]);
-		printf("For example: %s 2.6.33-rc2 2.6.33-rc3\n", argv[0]);
+		printf("Usage: %s <new_kernel> <old_kernel>\n", argv[0]);
+		printf("For example: %s 2.6.33-rc4 2.6.33-rc3\n", argv[0]);
 
 		exit(0);
 	}
 
-	prev_kernel = argv[1];
-	this_kernel = argv[2];
+	this_kernel = argv[1];
+	prev_kernel = argv[2];
 
 	if (!lkp_connect()) {
 		return -1;
