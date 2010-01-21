@@ -1,0 +1,342 @@
+diff --git a/kernel/sched.c b/kernel/sched.c
+index f849212..5e3918c 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -80,6 +80,38 @@
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/sched.h>
+ 
++enum func_id {
++	resched_cpu_id,
++	set_user_nice_id,
++	normalize_task_id,
++	check_preempt_tick_id,
++	entity_tick_id,
++	hrtick_start_fair_id,
++	check_preempt_wakeup_id,
++	task_fork_fair_id,
++	prio_changed_fair_id,
++	switched_to_fair_id,
++	check_preempt_curr_idle_id,
++	switched_to_idle_id,
++	prio_changed_idle_id,
++	sched_rt_rq_enqueue_id,
++	update_curr_rt_id,
++	check_preempt_equal_prio_id,
++	check_preempt_curr_rt_id,
++	push_rt_task_id,
++	switched_to_rt_id,
++	prio_changed_rt_id,
++	task_new_fair_id,
++	func_id_max
++};
++
++struct debug_data {
++	unsigned long count[func_id_max];
++};
++
++DEFINE_PER_CPU(struct debug_data, my_debug_data);
++EXPORT_PER_CPU_SYMBOL(my_debug_data);
++
+ /*
+  * Convert user-nice values [ -20 ... 0 ... 19 ]
+  * to static priority [ MAX_RT_PRIO..MAX_PRIO-1 ],
+@@ -1174,9 +1206,9 @@ static inline void init_hrtick(void)
+ #define tsk_is_polling(t) test_tsk_thread_flag(t, TIF_POLLING_NRFLAG)
+ #endif
+ 
+-static void resched_task(struct task_struct *p)
++static void resched_task(struct task_struct *p, enum func_id id)
+ {
+-	int cpu;
++	int cpu, this_cpu;
+ 
+ 	assert_spin_locked(&task_rq(p)->lock);
+ 
+@@ -1186,13 +1218,16 @@ static void resched_task(struct task_struct *p)
+ 	set_tsk_need_resched(p);
+ 
+ 	cpu = task_cpu(p);
+-	if (cpu == smp_processor_id())
++	this_cpu = smp_processor_id();
++	if (cpu == this_cpu)
+ 		return;
+ 
+ 	/* NEED_RESCHED must be visible before we test polling */
+ 	smp_mb();
+-	if (!tsk_is_polling(p))
++	if (!tsk_is_polling(p)) {
++		per_cpu(my_debug_data, this_cpu).count[id]++;
+ 		smp_send_reschedule(cpu);
++	}
+ }
+ 
+ static void resched_cpu(int cpu)
+@@ -1202,7 +1237,7 @@ static void resched_cpu(int cpu)
+ 
+ 	if (!spin_trylock_irqsave(&rq->lock, flags))
+ 		return;
+-	resched_task(cpu_curr(cpu));
++	resched_task(cpu_curr(cpu), resched_cpu_id);
+ 	spin_unlock_irqrestore(&rq->lock, flags);
+ }
+ 
+@@ -1270,7 +1305,7 @@ static void sched_rt_avg_update(struct rq *rq, u64 rt_delta)
+ }
+ 
+ #else /* !CONFIG_SMP */
+-static void resched_task(struct task_struct *p)
++static void resched_task(struct task_struct *p, enum func_id id)
+ {
+ 	assert_spin_locked(&task_rq(p)->lock);
+ 	set_tsk_need_resched(p);
+@@ -6040,7 +6075,7 @@ void set_user_nice(struct task_struct *p, long nice)
+ 		 * lowered its priority, then reschedule its CPU:
+ 		 */
+ 		if (delta < 0 || (delta > 0 && task_running(rq, p)))
+-			resched_task(rq->curr);
++			resched_task(rq->curr, set_user_nice_id);
+ 	}
+ out_unlock:
+ 	task_rq_unlock(rq, &flags);
+@@ -9629,7 +9664,7 @@ static void normalize_task(struct rq *rq, struct task_struct *p)
+ 	__setscheduler(rq, p, SCHED_NORMAL, 0);
+ 	if (on_rq) {
+ 		activate_task(rq, p, 0);
+-		resched_task(rq->curr);
++		resched_task(rq->curr, normalize_task_id);
+ 	}
+ }
+ 
+diff --git a/kernel/sched_fair.c b/kernel/sched_fair.c
+index da87385..4751225 100644
+--- a/kernel/sched_fair.c
++++ b/kernel/sched_fair.c
+@@ -816,7 +816,7 @@ check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+ 	ideal_runtime = sched_slice(cfs_rq, curr);
+ 	delta_exec = curr->sum_exec_runtime - curr->prev_sum_exec_runtime;
+ 	if (delta_exec > ideal_runtime) {
+-		resched_task(rq_of(cfs_rq)->curr);
++		resched_task(rq_of(cfs_rq)->curr, check_preempt_tick_id);
+ 		/*
+ 		 * The current task ran long enough, ensure it doesn't get
+ 		 * re-elected due to buddy favours.
+@@ -903,7 +903,7 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
+ 	 * validating it and just reschedule.
+ 	 */
+ 	if (queued) {
+-		resched_task(rq_of(cfs_rq)->curr);
++		resched_task(rq_of(cfs_rq)->curr, entity_tick_id);
+ 		return;
+ 	}
+ 	/*
+@@ -937,7 +937,7 @@ static void hrtick_start_fair(struct rq *rq, struct task_struct *p)
+ 
+ 		if (delta < 0) {
+ 			if (rq->curr == p)
+-				resched_task(p);
++				resched_task(p, hrtick_start_fair_id);
+ 			return;
+ 		}
+ 
+@@ -1597,7 +1597,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
+ 	update_curr(cfs_rq);
+ 
+ 	if (unlikely(rt_prio(p->prio))) {
+-		resched_task(curr);
++		resched_task(curr, check_preempt_wakeup_id);
+ 		return;
+ 	}
+ 
+@@ -1637,7 +1637,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
+ 
+ 	/* Idle tasks are by definition preempted by everybody. */
+ 	if (unlikely(curr->policy == SCHED_IDLE)) {
+-		resched_task(curr);
++		resched_task(curr, check_preempt_wakeup_id);
+ 		return;
+ 	}
+ 
+@@ -1645,14 +1645,14 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
+ 	    (sched_feat(WAKEUP_OVERLAP) &&
+ 	     (se->avg_overlap < sysctl_sched_migration_cost &&
+ 	      pse->avg_overlap < sysctl_sched_migration_cost))) {
+-		resched_task(curr);
++		resched_task(curr, check_preempt_wakeup_id);
+ 		return;
+ 	}
+ 
+ 	if (sched_feat(WAKEUP_RUNNING)) {
+ 		if (pse->avg_running < se->avg_running) {
+ 			set_next_buddy(pse);
+-			resched_task(curr);
++			resched_task(curr, check_preempt_wakeup_id);
+ 			return;
+ 		}
+ 	}
+@@ -1665,7 +1665,7 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
+ 	BUG_ON(!pse);
+ 
+ 	if (wakeup_preempt_entity(se, pse) == 1)
+-		resched_task(curr);
++		resched_task(curr, check_preempt_wakeup_id);
+ }
+ 
+ static struct task_struct *pick_next_task_fair(struct rq *rq)
+@@ -1899,7 +1899,7 @@ static void task_new_fair(struct rq *rq, struct task_struct *p)
+ 		 * 'current' within the tree based on its new key value.
+ 		 */
+ 		swap(curr->vruntime, se->vruntime);
+-		resched_task(rq->curr);
++		resched_task(rq->curr, task_new_fair_id);
+ 	}
+ 
+ 	enqueue_task_fair(rq, p, 0);
+@@ -1919,7 +1919,7 @@ static void prio_changed_fair(struct rq *rq, struct task_struct *p,
+ 	 */
+ 	if (running) {
+ 		if (p->prio > oldprio)
+-			resched_task(rq->curr);
++			resched_task(rq->curr, prio_changed_fair_id);
+ 	} else
+ 		check_preempt_curr(rq, p, 0);
+ }
+@@ -1936,7 +1936,7 @@ static void switched_to_fair(struct rq *rq, struct task_struct *p,
+ 	 * if we can still preempt the current task.
+ 	 */
+ 	if (running)
+-		resched_task(rq->curr);
++		resched_task(rq->curr, switched_to_fair_id);
+ 	else
+ 		check_preempt_curr(rq, p, 0);
+ }
+diff --git a/kernel/sched_idletask.c b/kernel/sched_idletask.c
+index b133a28..9c851d1 100644
+--- a/kernel/sched_idletask.c
++++ b/kernel/sched_idletask.c
+@@ -16,7 +16,7 @@ static int select_task_rq_idle(struct task_struct *p, int sd_flag, int flags)
+  */
+ static void check_preempt_curr_idle(struct rq *rq, struct task_struct *p, int flags)
+ {
+-	resched_task(rq->idle);
++	resched_task(rq->idle, check_preempt_curr_idle_id);
+ }
+ 
+ static struct task_struct *pick_next_task_idle(struct rq *rq)
+@@ -75,7 +75,7 @@ static void switched_to_idle(struct rq *rq, struct task_struct *p,
+ {
+ 	/* Can this actually happen?? */
+ 	if (running)
+-		resched_task(rq->curr);
++		resched_task(rq->curr, switched_to_idle_id);
+ 	else
+ 		check_preempt_curr(rq, p, 0);
+ }
+@@ -92,7 +92,7 @@ static void prio_changed_idle(struct rq *rq, struct task_struct *p,
+ 	 */
+ 	if (running) {
+ 		if (p->prio > oldprio)
+-			resched_task(rq->curr);
++			resched_task(rq->curr, prio_changed_idle_id);
+ 	} else
+ 		check_preempt_curr(rq, p, 0);
+ }
+diff --git a/kernel/sched_rt.c b/kernel/sched_rt.c
+index 5c5fef3..b73cc76 100644
+--- a/kernel/sched_rt.c
++++ b/kernel/sched_rt.c
+@@ -206,7 +206,7 @@ static void sched_rt_rq_enqueue(struct rt_rq *rt_rq)
+ 		if (rt_se && !on_rt_rq(rt_se))
+ 			enqueue_rt_entity(rt_se);
+ 		if (rt_rq->highest_prio.curr < curr->prio)
+-			resched_task(curr);
++			resched_task(curr, sched_rt_rq_enqueue_id);
+ 	}
+ }
+ 
+@@ -284,7 +284,7 @@ static inline struct rt_rq *group_rt_rq(struct sched_rt_entity *rt_se)
+ static inline void sched_rt_rq_enqueue(struct rt_rq *rt_rq)
+ {
+ 	if (rt_rq->rt_nr_running)
+-		resched_task(rq_of_rt_rq(rt_rq)->curr);
++		resched_task(rq_of_rt_rq(rt_rq)->curr, sched_rt_rq_enqueue_id);
+ }
+ 
+ static inline void sched_rt_rq_dequeue(struct rt_rq *rt_rq)
+@@ -627,7 +627,7 @@ static void update_curr_rt(struct rq *rq)
+ 			spin_lock(&rt_rq->rt_runtime_lock);
+ 			rt_rq->rt_time += delta_exec;
+ 			if (sched_rt_runtime_exceeded(rt_rq))
+-				resched_task(curr);
++				resched_task(curr, update_curr_rt_id);
+ 			spin_unlock(&rt_rq->rt_runtime_lock);
+ 		}
+ 	}
+@@ -994,7 +994,7 @@ static void check_preempt_equal_prio(struct rq *rq, struct task_struct *p)
+ 	 * to try and push current away:
+ 	 */
+ 	requeue_task_rt(rq, p, 1);
+-	resched_task(rq->curr);
++	resched_task(rq->curr, check_preempt_equal_prio_id);
+ }
+ 
+ #endif /* CONFIG_SMP */
+@@ -1005,7 +1005,7 @@ static void check_preempt_equal_prio(struct rq *rq, struct task_struct *p)
+ static void check_preempt_curr_rt(struct rq *rq, struct task_struct *p, int flags)
+ {
+ 	if (p->prio < rq->curr->prio) {
+-		resched_task(rq->curr);
++		resched_task(rq->curr, check_preempt_curr_rt_id);
+ 		return;
+ 	}
+ 
+@@ -1313,7 +1313,7 @@ static int push_rt_task(struct rq *rq)
+ 	 * just reschedule current.
+ 	 */
+ 	if (unlikely(next_task->prio < rq->curr->prio)) {
+-		resched_task(rq->curr);
++		resched_task(rq->curr, push_rt_task_id);
+ 		return 0;
+ 	}
+ 
+@@ -1360,7 +1360,7 @@ static int push_rt_task(struct rq *rq)
+ 	set_task_cpu(next_task, lowest_rq->cpu);
+ 	activate_task(lowest_rq, next_task, 0);
+ 
+-	resched_task(lowest_rq->curr);
++	resched_task(lowest_rq->curr, push_rt_task_id);
+ 
+ 	double_unlock_balance(rq, lowest_rq);
+ 
+@@ -1620,7 +1620,7 @@ static void switched_to_rt(struct rq *rq, struct task_struct *p,
+ 			check_resched = 0;
+ #endif /* CONFIG_SMP */
+ 		if (check_resched && p->prio < rq->curr->prio)
+-			resched_task(rq->curr);
++			resched_task(rq->curr, switched_to_rt_id);
+ 	}
+ }
+ 
+@@ -1646,11 +1646,11 @@ static void prio_changed_rt(struct rq *rq, struct task_struct *p,
+ 		 * Only reschedule if p is still on the same runqueue.
+ 		 */
+ 		if (p->prio > rq->rt.highest_prio.curr && rq->curr == p)
+-			resched_task(p);
++			resched_task(p, prio_changed_rt_id);
+ #else
+ 		/* For UP simply resched on drop of prio */
+ 		if (oldprio < p->prio)
+-			resched_task(p);
++			resched_task(p, prio_changed_rt_id);
+ #endif /* CONFIG_SMP */
+ 	} else {
+ 		/*
+@@ -1659,7 +1659,7 @@ static void prio_changed_rt(struct rq *rq, struct task_struct *p,
+ 		 * then reschedule.
+ 		 */
+ 		if (p->prio < rq->curr->prio)
+-			resched_task(rq->curr);
++			resched_task(rq->curr, prio_changed_rt_id);
+ 	}
+ }
+ 
