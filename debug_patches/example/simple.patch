@@ -1,0 +1,48 @@
+diff --git a/arch/x86/kernel/apic/ipi.c b/arch/x86/kernel/apic/ipi.c
+index 08385e0..93b8f0d 100644
+--- a/arch/x86/kernel/apic/ipi.c
++++ b/arch/x86/kernel/apic/ipi.c
+@@ -19,11 +19,28 @@
+ #include <asm/proto.h>
+ #include <asm/ipi.h>
+ 
++struct debug_data {
++	unsigned long total_tsc;
++	unsigned long count;
++};
++
++DEFINE_PER_CPU(struct debug_data, my_debug_data);
++EXPORT_PER_CPU_SYMBOL(my_debug_data);
++
++int my_debug_start = 0;
++EXPORT_SYMBOL(my_debug_start);
++
+ void default_send_IPI_mask_sequence_phys(const struct cpumask *mask, int vector)
+ {
+ 	unsigned long query_cpu;
+ 	unsigned long flags;
+ 
++	u64 t0, t1;
++	int cpu;
++
++	if (my_debug_start)
++		rdtscll(t0);
++
+ 	/*
+ 	 * Hack. The clustered APIC addressing mode doesn't allow us to send
+ 	 * to an arbitrary mask, so I do a unicast to each CPU instead.
+@@ -35,6 +52,14 @@ void default_send_IPI_mask_sequence_phys(const struct cpumask *mask, int vector)
+ 				query_cpu), vector, APIC_DEST_PHYSICAL);
+ 	}
+ 	local_irq_restore(flags);
++
++	if (my_debug_start) {
++		rdtscll(t1);
++		cpu = smp_processor_id();
++
++		per_cpu(my_debug_data, cpu).total_tsc += (t1 - t0);
++		per_cpu(my_debug_data, cpu).count++;
++	}
+ }
+ 
+ void default_send_IPI_mask_allbutself_phys(const struct cpumask *mask,
