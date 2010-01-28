@@ -1,6 +1,6 @@
 all: lkp_csv
-CFLAGS=-g -c -I/home/mlin/mysql/include
-LDFLAGS=-L/home/mlin/mysql/lib -lmysql -lpthread
+CFLAGS=-g -c -I/usr/include/mysql
+LDFLAGS=-L/usr/lib64/mysql -lmysqlclient
 
 lkp_csv.o: lkp_csv.c
 	gcc ${CFLAGS} lkp_csv.c
