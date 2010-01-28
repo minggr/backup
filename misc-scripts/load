@@ -1,0 +1,10 @@
+#!/bin/sh
+
+module=simple
+
+if [ "`/sbin/lsmod | grep $module`" != "" ] ; then
+	sudo /sbin/rmmod $module
+fi
+
+sudo /sbin/insmod ${module}.ko
+

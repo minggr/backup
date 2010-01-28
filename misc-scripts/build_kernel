@@ -1,0 +1,6 @@
+#!/bin/bash
+
+KERNEL=~/linux-2.6
+cd $KERNEL
+cpu_num=`cat /proc/cpuinfo| grep "^processor"| wc -l`
+make -j $cpu_num > /dev/null && sudo make modules_install install
