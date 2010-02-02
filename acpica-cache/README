@@ -1,0 +1,28 @@
+Files
+=====
+acpi_db_batch_execute.patch:
+I ported AcpiExec batch command to linux kernel.
+
+enable_acpica_internal_cache.patch:
+Use acpica internal cache
+
+test_module.c
+The linux kernel module to test.
+
+Makefile:
+To build kernel module test_module.ko
+
+Usage
+=====
+make
+insmod test_module.ko
+cat /proc/test
+rmmod test_module
+
+Output
+======
+Total TSC: 18354274280
+
+In test_module.c, 100 predefined methods are executed for 1000 times.
+This output means the TSC times spend for the executing.
+
