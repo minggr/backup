@@ -1,3 +1,7 @@
+0. no need to re-build kernel(2.6.32-5-amd64)
+
+modprobe kvm-intel
+
 1. download qemu-kvm
 
 git clone git://git.kernel.org/pub/scm/virt/kvm/qemu-kvm.git
