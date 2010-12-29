@@ -1,0 +1,22 @@
+commit 96e016a0fad6eee403377f6c2afe777b885d9d89
+Author: Lin Ming <ming.m.lin@intel.com>
+Date:   Wed Dec 29 10:55:52 2010 +0800
+
+    enable acpi debug output
+---
+ hw/acpi_piix4.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/hw/acpi_piix4.c b/hw/acpi_piix4.c
+index 1990424..41f8a6f 100644
+--- a/hw/acpi_piix4.c
++++ b/hw/acpi_piix4.c
+@@ -247,7 +247,7 @@ static void apm_ctrl_changed(uint32_t val, void *arg)
+ 
+ static void acpi_dbg_writel(void *opaque, uint32_t addr, uint32_t val)
+ {
+-    PIIX4_DPRINTF("ACPI: DBG: 0x%08x\n", val);
++    printf("ACPI: DBG: 0x%08x\n", val);
+ }
+ 
+ static void pm_io_space_update(PIIX4PMState *s)

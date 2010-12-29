@@ -1,0 +1,22 @@
+1. download qemu-kvm
+
+git clone git://git.kernel.org/pub/scm/virt/kvm/qemu-kvm.git
+
+2. download seabios
+
+git://git.linuxtogo.org/home/kevin/seabios.git
+
+3. apply my patches
+
+seabios-01-fix-build-warning.patch
+seabios-02-enable-acpi-debug-output.patch
+qemu-kvm-01-enable-debug-output.patch
+
+4. copy pc-bios
+
+cp -a qemu-kvm/pc-bios seabios/out/
+
+5. use it
+
+cd qemu-kvm
+./x86_64-softmmu/qemu-system-x86_64 -L ../seabios/out <path to xxx.img>
