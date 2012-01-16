@@ -9,7 +9,7 @@
 # modify githome as necessary.
 #
 
-$githome = "/work/git/acpica";
+$githome = "http://www.acpica.org/repos/acpica.git";
 $gitroot = "acpica";
 
 $version;
@@ -24,4 +24,4 @@ if ($ARGV[0])
 # Checkout entire source and linux makefiles
 
 system("echo Getting version $version of ACPICA");
-system("rm -rf $gitroot; git clone $githome");
+system("rm -rf $gitroot; http_proxy=http://proxy.jf.intel.com:911 git clone $githome");
