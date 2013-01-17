@@ -1,4 +1,80 @@
 #!/bin/bash
 
-cscope -bkqR
-ctags -R
+function mktag_all()
+{
+	if [ "$1" == "u" ] ; then
+		cscope -bqR
+	else
+		cscope -bkqR
+	fi
+	ctags -R
+}
+
+dirs=""
+#dirs="$dirs arch"
+#dirs="$dirs arch/i386"
+#dirs="$dirs arch/x86_64"
+dirs="$dirs arch/x86"
+dirs="$dirs block"
+#dirs="$dirs crypto"
+#dirs="$dirs drivers"
+dirs="$dirs drivers/base"
+#dirs="$dirs drivers/char/sysrq.c"
+dirs="$dirs drivers/acpi"
+#dirs="$dirs fs/ext2"
+#dirs="$dirs fs/ext3"
+dirs="$dirs fs/*.c"
+dirs="$dirs fs/*.h"
+dirs="$dirs include"
+dirs="$dirs init"
+#dirs="$dirs ipc"
+dirs="$dirs kernel"
+dirs="$dirs lib"
+dirs="$dirs mm"
+#dirs="$dirs net"
+#dirs="$dirs samples"
+#dirs="$dirs security"
+#dirs="$dirs sound"
+#dirs="$dirs tools"
+dirs="$dirs tools/perf"
+#dirs="$dirs usr"
+#dirs="$dirs virt"
+#dirs="$dirs perfmon"
+
+function mktag_linux_src()
+{
+	files=`find $dirs -name "*.[ch]" -type f`	
+
+	cscope -bkq $files
+	ctags $files
+}
+
+function mktag_acpica()
+{
+	files=`find source -type f`	
+
+	cscope -bkq $files
+	ctags $files
+}
+
+function mktag_java()
+{
+	files=`find -name "*.java" -type f`	
+
+	cscope -bkq $files
+	ctags $files
+}
+
+rm -f cscope.* tags
+
+if [ "$1" == "all" ] ; then
+	mktag_all
+elif [ "$1" == "java" ] ; then
+	mktag_java
+elif [ -f "MAINTAINERS" ] ; then
+	mktag_linux_src
+elif [ -d "source/components/executer" ] ; then
+	mktag_acpica
+else
+	mktag_all
+fi
